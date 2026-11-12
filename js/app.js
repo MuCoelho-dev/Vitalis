@@ -160,7 +160,7 @@ function telaPerfil() {
             <a class="btn btn-lg btn-light" href="#inicio">Voltar</a>
           </div>
         </form>
-        <div class="notice" style="margin:20px 0 0">
+        <div class="notice" style="margin:27px 0 0">
           💡 <b>Sobre o perfil</b><br>
           Seus dados pessoais podem ser atualizados sempre que necessário. O e-mail utilizado no cadastro não pode ser alterado nesta tela.
         </div>
@@ -217,7 +217,7 @@ function telaLista(tipo) {
           </div>
         </div>`;
     }).join('')}</div>`;
-    if (m.cabecalho) corpo = `<div style="margin-top:20px">${corpo}</div>`;
+    if (m.cabecalho) corpo = `<div style="margin-top:27px">${corpo}</div>`;
   }
 
   conteudo.innerHTML = `
