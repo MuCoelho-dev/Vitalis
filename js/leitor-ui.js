@@ -95,8 +95,7 @@ const LeitorUI = {
 
     const campos = Reconhecedor.paraModulo(modulo, a, indiceMed);
     const feitos = this.preencher(modulo, form, campos);
-    // em Documentos (aba genérica), uma sugestão de baixa confiança para trocar de aba é só ruído: não mostra
-    const modAlvo = a.modulo && a.modulo !== modulo && !(modulo === 'documentos' && a.confianca === 'baixa') ? a.modulo : null;
+    const modAlvo = a.modulo && a.modulo !== modulo ? a.modulo : null;
     const perfil = this._perfilDoDocumento(a);
     const fmt = (Reconhecedor.TIPOS[a.tipo] || {}).rotulo || a.rotulo;
 
@@ -133,13 +132,6 @@ const LeitorUI = {
       html += `<div class="leitor-linha"><b>Esta receita tem ${a.medicamentos.length} medicamentos.</b> Escolha qual cadastrar agora:
         ${a.medicamentos.map((m, i) => `<button type="button" class="chip chip-btn ${i === indiceMed ? 'sel' : ''}" data-med="${i}">${esc(m.nome)} ${esc(m.dosagem)}</button>`).join('')}
         <small class="muted"> (depois é só salvar e repetir o anexo para o próximo)</small></div>`;
-    }
-
-    // carteirinha com várias vacinas: o usuário escolhe qual cadastrar agora (mesmo mecanismo das receitas)
-    if (modulo === 'vacinas' && a.vacinas_lista && a.vacinas_lista.length > 1) {
-      html += `<div class="leitor-linha"><b>Esta carteirinha tem ${a.vacinas_lista.length} vacinas.</b> Escolha qual cadastrar agora:
-        ${a.vacinas_lista.map((v, i) => `<button type="button" class="chip chip-btn ${i === indiceMed ? 'sel' : ''}" data-med="${i}">${esc(v.nome)} (${dataBR(v.data)})</button>`).join('')}
-        <small class="muted"> (depois é só salvar e repetir o anexo para a próxima)</small></div>`;
     }
 
     if (a.valores && a.valores.length) {
@@ -190,15 +182,7 @@ const LeitorUI = {
     });
     const idAtivo = ativo.dep ? ativo.dep.id : 0;
     const nomeDoc = `<b>${esc(a.paciente)}</b>`;
-    if (!melhor) {
-      // Conta de demonstração (Quarteto Fatec), no próprio perfil: aceita qualquer nome, para os documentos de exemplo
-      const demo = u.email === Vitalis.usuarioDemo.email && !ativo.dep;
-      if (demo) return { mensagem: `👤 Nome do paciente no documento: ${nomeDoc}.` };
-      return {
-        alerta: true,
-        mensagem: `⚠️ Este documento está em nome de ${nomeDoc}, que não é o perfil ativo (<b>${esc(ativo.nome)}</b>) nem outro perfil cadastrado. Confira se ele pertence a este paciente antes de salvar.`
-      };
-    }
+    if (!melhor) return { mensagem: `👤 Nome do paciente no documento: ${nomeDoc}.` };
     if (melhor.id === idAtivo) return { mensagem: `✅ O nome no documento (${nomeDoc}) confere com o perfil ativo.` };
     return {
       alerta: true, trocarPara: melhor,
