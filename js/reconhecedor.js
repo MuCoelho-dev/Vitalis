@@ -77,8 +77,8 @@ const Reconhecedor = {
     vacina: {
       rotulo: 'Vacina / carteira de vacinação', modulo: 'vacinas', docTipo: 'Vacina',
       regras: [
-        [/vacina|imuniza|vacinacao/, 6, 'vacina'],
-        [/carteira de vacina|caderneta/, 6, 'carteira de vacinação'],
+        [/\bvacina\b|imuniza|vacinacao/, 6, 'vacina'],          // "vacinas em dia" (plural, citação solta) não conta
+        [/carteira de vacina|caderneta de vacina/, 6, 'carteira de vacinação'],
         [/\blote\b/, 3, 'lote'],
         [/\bdose\b|reforco/, 2, 'dose/reforço'],
         [/aplicacao|aplicada/, 2, 'aplicação'],
@@ -88,7 +88,7 @@ const Reconhecedor = {
     alergia: {
       rotulo: 'Alergia / laudo de alergia', modulo: 'alergias', docTipo: 'Laudo',
       regras: [
-        [/alergi|alergic/, 6, 'alergia'],
+        [/\balergia\b|\balergias\s*:|alergic/, 6, 'alergia'],      // "não tem alergias conhecidas" (citação solta) não conta
         [/reacao alergica|anafila/, 4, 'reação alérgica'],
         [/urticaria|edema de glote|coceira|prurido/, 2, 'sintomas'],
         [/teste (de )?(alergia|alergico|cutaneo)|\big[ef]\b/, 3, 'teste alérgico']
@@ -220,6 +220,8 @@ const Reconhecedor = {
     const ignorar = /nasc|validade|vencimento|proxima|retorno|reforco em|admissao/;
     let melhor = null, melhorPts = -1;
     linhas.forEach((l, i) => {
+      // tira "Nascimento: 14/03/1992" da linha para não perder outra data da mesma linha (ex.: "Data do exame: 03/11/2026")
+      l = l.replace(/nasc\w*\.?\s*(?:[:\-]\s*)?(?:\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{1,2}\s+de\s+[a-zçãé]+\s+de\s+\d{4})/gi, '');
       const n = this.norm(l);
       if (ignorar.test(n)) return;
       this.datasDaLinha(l).forEach(d => {
@@ -292,7 +294,7 @@ const Reconhecedor = {
   valores(linhas) {
     const re = new RegExp(
       '^\\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9 .,\\/()%\\-]{1,40}?)[.:·_\\-–\\s]+' +
-      '([<>]?\\d{1,3}(?:\\.\\d{3})+(?:,\\d+)?|[<>]?\\d+(?:[.,]\\d+)?)\\s*(' + this.UNIDADES + ')');
+      '([<>]?\\d{1,3}(?:\\.\\d{3})+(?:,\\d+)?|[<>]?\\d+(?:[.,]\\d+)?)\\s*(?:\\((?:alto|alta|baixo|baixa|elevado|reduzido)\\)\\s*)?(' + this.UNIDADES + ')');
     const proibido = /paciente|data|nascimento|solicitante|crm|cpf|telefone|pagina|protocolo|registro|idade|peso|altura|referencia|metodo/;
     const vistos = new Set(), lista = [];
 
@@ -335,7 +337,7 @@ const Reconhecedor = {
   },
 
   medicamentos(linhas, dataDoc) {
-    const re = /^\s*(?:\d+\s*[\)\.\-–]\s*|[-•*]\s*|rx[:.]?\s*)?(\p{Lu}[\p{L}\-]{2,}(?:\s\p{L}[\p{L}\-]+){0,2}?)\s+(\d+(?:[.,]\d+)?)\s*(mg|mcg|µg|g|ml|ui|%)(?=\s|$|[,.;\/])/iu;
+    const re = /^\s*(?:rx[:.]?\s*)?(?:\d+\s*[\)\.\-–]\s*|[-•*]\s*)?(\p{Lu}[\p{L}\-]{2,}(?:\s\p{L}[\p{L}\d\-]*){0,2}?)\s+(\d+(?:[.,]\d+)?)\s*(mg|mcg|µg|g|ml|ui|%)(?=\s|$|[,.;\/])/iu;
     const naoNome = /^(tomar|dose|paciente|data|crm|dr|dra|uso|via|aplicar|valor|peso|idade)\b/i;
     const lista = [];
 
@@ -358,6 +360,8 @@ const Reconhecedor = {
       else if ((f = b.match(/\b(uma|duas|tres)\s*vez(?:es)?\s*(?:ao|por)\s*dia/))) freq = `${f[1]} ${f[1] === 'uma' ? 'vez' : 'vezes'} ao dia`;
       else if (/ao deitar/.test(b)) freq = 'ao deitar';
       else if (/pela manha/.test(b)) freq = 'pela manhã';
+      else if (/\ba noite\b/.test(b)) freq = 'à noite';
+      else if (/\bao dia\b/.test(b)) freq = 'ao dia';
       const dias = (b.match(/por\s*(\d+)\s*dias?/) || [])[1];
       const continuo = /uso continuo/.test(b);
 
@@ -397,6 +401,53 @@ const Reconhecedor = {
       if (/pr[óo]xima|refor[çc]o em/i.test(l)) { const ds = this.datasDaLinha(l); if (ds.length) { proxima = ds[0]; break; } }
     }
     return { nome: nome ? this.frase(nome).replace(/\bcovid-19\b/i, 'Covid-19') : '', dose, lote, proxima };
+  },
+
+  // Carteirinha com VÁRIAS vacinas em linhas de tabela ("Hepatite B  3ª dose  10/11/2022  HB2208 ...").
+  // Cada linha com nome de vacina + data vira um item; só vale se achar 2 ou mais (carteira de 1 vacina segue o fluxo normal).
+  CANON_VACINAS: ['influenza', 'covid', 'hepatite b', 'hepatite a', 'febre amarela', 'triplice viral', 'tetano', 'meningococica',
+                  'pneumococica', 'poliomielite', 'rotavirus', 'varicela', 'dengue', 'herpes zoster', 'pentavalente'],
+
+  distancia(a, b) { // distância de edição (letras trocadas/faltando por erro do OCR)
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return d[a.length][b.length];
+  },
+
+  nomeVacinaDaLinha(prefixo) {
+    const p = this.norm(prefixo).replace(/[^a-z0-9 ()\-]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!p) return null;
+    for (const [nm, re] of this.VACINAS) if (re.test(p)) return nm;
+    if (/^dt\b|dupla adulto/.test(p)) return 'Tétano (dT/dTpa)';   // "dT (dupla adulto)" nas carteirinhas
+    let melhor = null, dm = 3;                               // aceita até 2 letras erradas (ex.: "epatite B" -> Hepatite B)
+    this.CANON_VACINAS.forEach(c => {
+      const dist = this.distancia(p.split(/ \(/)[0], c);
+      if (dist < dm) { dm = dist; melhor = c; }
+    });
+    if (!melhor || p.length < 6) return null;
+    for (const [nm, re] of this.VACINAS) if (re.test(melhor)) return nm;
+    return null;
+  },
+
+  vacinasDaTabela(linhas) {
+    const itens = [];
+    for (const l of linhas) {
+      const md = l.match(/\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}/);
+      if (!md) continue;
+      const data = this.datasDaLinha(l)[0];
+      if (!data) continue;
+      const corte = l.search(/\b\d+\s*[ªaº°o]?\s*dose\b|\bdose\b|refor[çc]o|\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}/i);
+      const nome = this.nomeVacinaDaLinha(l.slice(0, corte < 0 ? 0 : corte));
+      if (!nome) continue;
+      const n = this.norm(l);
+      const d = l.match(/(\d+)\s*[ªaº°o]?\s*dose/i);
+      const dose = d ? `${d[1]}ª dose` : /dose unica/.test(n) ? 'Dose única' : /dose anual/.test(n) ? 'Dose anual' : /refor[cç]o/.test(n) ? 'Reforço' : '';
+      const lote = ((l.slice(l.indexOf(md[0]) + md[0].length).match(/^\W*([A-Za-z]{1,4}[0-9A-Za-z]{3,})/) || [])[1]) || '';
+      itens.push({ nome: this.frase(nome).replace(/\bcovid-19\b/i, 'Covid-19'), dose, data, lote });
+    }
+    return itens;
   },
 
   alergia(texto) {
@@ -487,7 +538,11 @@ const Reconhecedor = {
       r.relatorio = rel;
     }
     if (r.tipo === 'receita') r.medicamentos = this.medicamentos(linhas, r.data);
-    if (r.tipo === 'vacina') r.vacina = this.vacina(texto, linhas, r.data);
+    if (r.tipo === 'vacina') {
+      r.vacina = this.vacina(texto, linhas, r.data);
+      const tabela = this.vacinasDaTabela(linhas);
+      if (tabela.length > 1) r.vacinas_lista = tabela;      // carteirinha com várias vacinas
+    }
     if (r.tipo === 'alergia') r.alergia = this.alergia(texto);
     return r;
   },
@@ -511,7 +566,10 @@ const Reconhecedor = {
       const ex = a.exame || this.nomeDoExame(a.texto, a.linhas);
       ponha('nome', ex.nome); ponha('tipo', ex.tipo); ponha('data', a.data); ponha('local', a.local);
       const rv = this.resumoValores(a.valores);
-      ponha('resultado', rv || (a.tipo === 'exame' ? a.linhas.filter(l => /impress|conclus|resultado/i.test(l)).join(' ') : ''));
+      ponha('resultado', rv || (a.tipo === 'exame'
+        ? (a.linhas.filter(l => /impress|conclus|resultado/i.test(l)).join(' ')
+           || a.linhas.filter(l => /^laudo\s*:/i.test(l)).join(' ').replace(/^laudo\s*:\s*/i, ''))   // ex.: "LAUDO: Ritmo sinusal..." (eletrocardiograma)
+        : ''));
     } else if (modulo === 'consultas') {
       const esp = a.especialidade || this.especialidade(a.texto);
       ponha('especialidade', esp && esp.nome); ponha('medico', a.medico); ponha('data', a.data); ponha('local', a.local);
@@ -532,8 +590,14 @@ const Reconhecedor = {
       }
     } else if (modulo === 'vacinas') {
       const v = a.vacina || this.vacina(a.texto, a.linhas, a.data);
-      ponha('nome', v.nome); ponha('dose', v.dose); ponha('data', a.data); ponha('proxima', v.proxima);
-      ponha('local', a.local); ponha('observacoes', v.lote ? 'Lote: ' + v.lote : '');
+      const it = (a.vacinas_lista && a.vacinas_lista.length > 1) ? (a.vacinas_lista[indiceMed] || a.vacinas_lista[0]) : null;
+      if (it) { // carteirinha com várias vacinas: usa os dados da linha escolhida
+        ponha('nome', it.nome); ponha('dose', it.dose); ponha('data', it.data); ponha('proxima', v.proxima);
+        ponha('local', a.local); ponha('observacoes', it.lote ? 'Lote: ' + it.lote : '');
+      } else {
+        ponha('nome', v.nome); ponha('dose', v.dose); ponha('data', a.data); ponha('proxima', v.proxima);
+        ponha('local', a.local); ponha('observacoes', v.lote ? 'Lote: ' + v.lote : '');
+      }
     } else if (modulo === 'alergias') {
       const al = a.alergia || this.alergia(a.texto);
       ponha('nome', al.nome); ponha('tipo', al.tipo); ponha('gravidade', al.gravidade); ponha('reacao', al.reacao);
@@ -543,6 +607,11 @@ const Reconhecedor = {
       let nome = nomes[a.tipo] || '';
       if (a.tipo === 'receita' && a.medico) nome += ' - ' + a.medico;
       if (a.tipo === 'consulta') { const e = this.especialidade(a.texto); if (e) nome += ' - ' + e.nome; }
+      if (!nome) { // sem nome definido: usa o título do documento (ex.: "Laudo neuropsicológico")
+        const tit = a.linhas.slice(0, 10).find(l => l.length <= 70 &&
+          /^(laudo|relat[óo]rio|anota[çc][õo]es|parecer|declara[çc][ãa]o|encaminhamento|certid[ãa]o)\b/i.test(l));
+        if (tit) nome = this.frase(tit.replace(/[-–—:\s]+$/, ''));
+      }
       ponha('nome', nome); ponha('tipo', a.tipo === 'desconhecido' ? '' : a.docTipo); ponha('data', a.data);
       const desc = [];
       if (a.local) desc.push(a.local);
